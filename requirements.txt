@@ -1,5 +1,10 @@
-cffi==1.17.1
-cryptography==44.0.2
-pycparser==2.22
-pyotp==2.9.0
-qrcode==8.0
+cffi==2.1.1
+cryptography==50.0.1
+markdown-it-py==4.2.0
+mdurl==0.1.2
+pillow==12.3.0
+pycparser==3.0
+Pygments==2.21.0
+PyOTP==2.10.0
+qrcode==8.2
+rich==15.0.0
