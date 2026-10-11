@@ -379,35 +379,89 @@ def verify_mfa(secret):
 
 def setup_mfa(key, config):
     if config["mfa_enabled"]:
-        console.print("[yellow]MFA is already enabled. This menu does not reset or disable MFA.[/yellow]")
+        console.print(
+            Panel(
+                "[bold yellow]MFA is currently enabled.[/bold yellow]",
+                border_style="yellow",
+            )
+        )
+
+        choice = console.input(
+            "[yellow]Disable MFA? (y/N): [/yellow]"
+        ).strip().lower()
+
+        if choice != "y":
+            console.print("[dim]No changes made.[/dim]")
+            return
+
+        # Require the master password before disabling MFA.
+        password = getpass.getpass("Confirm master password: ")
+
+        try:
+            salt = base64.b64decode(config["salt"], validate=True)
+            candidate_key = derive_key(password, salt)
+            verifier = decrypt_text(config["verifier"], candidate_key)
+
+            if not secrets.compare_digest(
+                verifier, VERIFIER.decode("ascii")
+            ):
+                console.print("[bold red]Incorrect master password.[/bold red]")
+                return
+
+        except (VaultError, ValueError, KeyError):
+            console.print("[bold red]Authentication failed.[/bold red]")
+            return
+
+        updated = dict(config)
+        updated["mfa_enabled"] = False
+        updated["mfa_secret"] = None
+
+        try:
+            write_json(CONFIG_FILE, updated)
+            config.update(updated)
+
+            console.print(
+                Panel(
+                    "[bold green]MFA disabled successfully.[/bold green]\n"
+                    "Future logins will require your master password only.",
+                    border_style="green",
+                )
+            )
+        except VaultError as exc:
+            console.print(f"[bold red]Could not update MFA settings:[/bold red] {exc}")
+
         return
 
+    # MFA is currently disabled: begin enrollment.
     secret = pyotp.random_base32()
     uri = pyotp.TOTP(secret).provisioning_uri(
-        name="User", issuer_name="VAULT Password Manager"
+        name="User",
+        issuer_name="VAULT Password Manager",
     )
-    qr_path = APP_DIR / "mfa_qr.png"
 
-    console.print(Panel(
-        "Scan the QR code with your authenticator app.\n"
-        "Confirm enrollment with a valid code.\n\n"
-        "The QR image contains your MFA secret; do not share it.",
-        title="SET UP MFA", border_style="cyan",
-    ))
+    console.print(
+        Panel(
+            "Scan the QR code with your authenticator app.\n"
+            "Enter a valid code to enable MFA.",
+            title="SET UP MFA",
+            border_style="cyan",
+        )
+    )
+
+    qr_path = APP_DIR / "mfa_qr.png"
 
     try:
         qrcode.make(uri).save(qr_path)
-        qr_path.chmod(0o600)
-        # Open with the desktop's registered default image viewer.
-        subprocess.Popen(["loupe", str(qr_path)])
-    except (OSError, Exception) as exc:
-        console.print(f"[red]Could not create/open QR image: {exc}[/red]")
-        console.print(f"[yellow]QR image path, if created: {qr_path}[/yellow]")
-        console.print("[dim]MFA was not enabled. You may open the image manually.[/dim]")
-        return
 
-    console.print("[dim]If the image does not open, open this file manually:[/dim]")
-    console.print(str(qr_path))
+        import subprocess
+        subprocess.Popen(["loupe", str(qr_path)])
+
+    except Exception as exc:
+        console.print(
+            f"[bold red]Could not create/open QR image:[/bold red] {exc}"
+        )
+        console.print(f"[dim]QR image path: {qr_path}[/dim]")
+        return
 
     if not verify_mfa(secret):
         console.print("[yellow]MFA setup cancelled. MFA remains disabled.[/yellow]")
@@ -416,18 +470,28 @@ def setup_mfa(key, config):
     updated = dict(config)
     updated["mfa_enabled"] = True
     updated["mfa_secret"] = encrypt_text(secret, key)
+
     try:
         write_json(CONFIG_FILE, updated)
         config.update(updated)
-        console.print("[bold green]MFA enabled successfully![/bold green]")
+
+        console.print(
+            Panel(
+                "[bold green]MFA enabled successfully![/bold green]",
+                border_style="green",
+            )
+        )
+
+    except VaultError as exc:
+        console.print(f"[bold red]Could not save MFA settings:[/bold red] {exc}")
+
+    finally:
         try:
             qr_path.unlink(missing_ok=True)
-            console.print("[dim]Temporary QR image deleted.[/dim]")
         except OSError:
-            console.print(f"[yellow]Please delete the QR image manually: {qr_path}[/yellow]")
-    except VaultError as exc:
-        console.print(f"[red]Could not save MFA settings: {exc}[/red]")
-        console.print(f"[yellow]Please delete the QR image manually: {qr_path}[/yellow]")
+            console.print(
+                "[yellow]Warning: Delete the MFA QR image manually.[/yellow]"
+            )
 
 
 # ============================================================
